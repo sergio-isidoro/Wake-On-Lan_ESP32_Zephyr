@@ -1,12 +1,9 @@
 #include "button.h"
 #include "wifi.h"
-#include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
-#include <stdio.h>
 
 /* Get the button configuration from the Devicetree alias 'sw0' */
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+
 /* Structure to store the GPIO callback information */
 static struct gpio_callback button_cb_data;
 
@@ -14,8 +11,7 @@ static struct gpio_callback button_cb_data;
  * @brief Callback function triggered when the button is pressed.
  */
 static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
-    printf("\nBOOT Button Pressed!\n");
-    /* Trigger the Wake-on-LAN Magic Packet transmission defined in wifi.c */
+    printk("\nBOOT Button Pressed!\n");
     trigger_wol();
 }
 
@@ -40,4 +36,9 @@ void button_init(void) {
     
     /* Add the callback to the GPIO driver */
     gpio_add_callback(button.port, &button_cb_data);
+
+}
+
+bool button_is_pressed(void) {
+    return gpio_pin_get_dt(&button) == 1;
 }

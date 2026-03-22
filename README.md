@@ -2,71 +2,102 @@
 
 *A Zephyr RTOS port and enhancement of the original [Wake-on-LAN_ESP32](https://github.com/sergio-isidoro/Wake-on-LAN_ESP32)*
 
-This project provides a complete, robust, and asynchronous **Wake-on-LAN (WoL)** solution specifically tailored for the **ESP32-C3 SuperMini** using the native **Zephyr RTOS** network stack and a custom UI for 0.42" OLED displays.
+This project provides a complete, robust, and asynchronous **Wake-on-LAN (WoL)** solution specifically tailored for the **ESP32-C3 SuperMini**. It features a captive portal for easy configuration, persistent storage, and a specialized UI for 0.42" OLED displays.
 
 ---
 
 ## ✨ Key Features
 
-* **Zephyr RTOS Native:** Built on Zephyr v4.3+, utilizing native `net_mgmt` and `net_icmp` APIs for reliable, non-blocking network handling.
-* **OLED Display UI (SSD1306):** Optimized for ultra-small **0.42" (72x40)** screens.
-    * **Partial Refresh Logic:** Only updates changed pixels to prevent flickering and save I2C bandwidth.
-    * **Smart IP Filtering:** Displays only the last two octets (e.g., `1.198`) to maximize readability on tiny screens.
-    * **Activity Animation:** Real-time refresh indicator (`>>>`) to show the system is alive.
-* **Dual Notification System (notify.c):** * **Visual LED Feedback:** Onboard Blue LED (GPIO 8) provides distinct patterns:
-        * **2 Blinks (500ms):** Magic Packet successfully sent.
-        * **1 Blink (500ms):** Target PC status changed (Online/Offline).
-* **Real-time Network Monitor:** Background **ICMP (Ping) monitor** tracks the target PC. It performs 3 initial attempts to handle ARP delays and then checks status every minute.
-* **Asynchronous Workqueues:** WoL packet dispatch and Ping checks are offloaded from the ISR to system workqueues, ensuring top-tier stability.
+* **Captive Portal Configuration:** No need to hardcode credentials. If no config is found, the device starts an Access Point (`WOL_ESP`) with a DNS redirector and HTTP server for easy setup.
+* **Persistent Storage (NVS):** Wi-Fi credentials, Target MAC, and Target IP are saved securely in the ESP32 internal Flash using the Zephyr Non-Volatile Storage (NVS) file system.
+* **Factory Reset:** Holding the BOOT button (GPIO 9) for 5 seconds wipes all saved settings and reboots the device into Portal Mode.
+* **Dual Trigger Support:** * **Main (BOOT):** Triggers the Magic Packet and handles Factory Reset.
+    * **Auxiliary (GPIO 0):** Support for an extra physical trigger or flag.
+* **System Reliability:** * **Hardware Watchdog (WDT):** 3-second timeout to automatically recover the system from network hangs.
+    * **Asynchronous Workqueues:** WoL packet dispatch and ICMP Ping checks are offloaded from ISRs for maximum stability.
+* **OLED UI (SSD1306):** Optimized for **0.42" (72x40)** screens.
+    * **Smart IP Filtering:** Displays only the relevant last two octets (e.g., `1.222`) to fit the tiny screen.
+    * **Heartbeat Animation:** A dynamic `>>>>>>>` indicator shows the system is actively monitoring the network.
 
 ---
 
 ## 🛠️ Hardware Requirements
 
 * **Microcontroller:** ESP32-C3 SuperMini.
-* **Display:** 0.42" OLED (SSD1306) connected via I2C (SDA: GPIO 5, SCL: GPIO 6).
+* **Display:** 0.42" OLED (SSD1306) via I2C (SDA: GPIO 5, SCL: GPIO 6).
 * **LED:** Internal Blue LED on **GPIO 8**.
-* **Button:** Onboard BOOT button on **GPIO 9**.
-* **Target PC:** Must support Wake-on-LAN via Ethernet and allow **ICMP Echo Requests (Ping)** through its firewall.
+* **Buttons:** * **Main (BOOT):** GPIO 9 (Trigger WoL / Factory Reset).
+* **Target PC:** Must support Wake-on-LAN and allow ICMP Echo Requests (Ping).
 
 ---
 
 ## 📂 Project Structure
 
-The project follows a clean, modular architecture:
-
-* `src/main.c`: Orchestrates the initialization of all subsystems.
-* `src/wifi.c`: Manages Wi-Fi connectivity, DHCP, ICMP Ping logic, and Magic Packet construction.
-* `src/display.c`: Handles the OLED UI, multithreaded rendering, and "Dirty-Check" refresh optimizations.
-* `src/notify.c`: Centralized module for LED patterns and UI synchronization.
-* `src/button.c`: GPIO interrupt handling for the physical trigger.
-* `app.overlay`: Devicetree definitions for the SSD1306 offset (28px) and GPIO mapping.
+* `src/main.c`: Core orchestration, Factory Reset logic, and Watchdog feeding.
+* `src/portal.c`: Captive Portal implementation (DNS Redirector + HTTP Server).
+* `src/storage.c`: NVS Flash management for persistent configurations.
+* `src/wifi.c`: Wi-Fi connectivity, DHCP, and ICMP (Ping) monitor task.
+* `src/display.c`: Multithreaded OLED rendering with dirty-check optimization.
+* `src/button.c`: GPIO interrupt handling for physical triggers.
+* `src/notify.c`: LED patterns and UI refresh synchronization.
+* `esp32c3_supermini.overlay`: Devicetree definitions for partitions, I2C, and GPIOs.
 
 ---
 
 ## 🚀 Quick Start
 
-1.  **Configure Network:** Edit `src/wifi.c` with your SSID, Password, and the Target PC's MAC/IP addresses.
-2.  **Build:**
+1.  **Build:**
     ```bash
-    west build -p -b esp32c3_supermini .
+    west build -p always -b esp32c3_supermini .
     ```
-3.  **Flash:**
+2.  **Flash:**
     ```bash
     west flash
     ```
+3.  **Setup:** * On first boot, connect to **`WOL_Config_ESP32`** Wi-Fi.
+    * The portal will open automatically. Enter your Wi-Fi SSID/PASS and the Target PC's MAC/IP.
+    * Save and the device will reboot to start monitoring your PC.
 
 ---
 
-## 🖥️ Display Layout
+## 🖥️ Display States
 
+### 1. Portal Mode (Configuration)
 | Line | Content | Description |
 | :--- | :--- | :--- |
-| **Top** | `>>>>>>>` | Dynamic activity/refresh animation. |
-| **Middle**| `1.198` | Filtered IP address (last two octets). |
-| **Bottom**| `ONLINE` | Target PC status (tracked via Ping). |
+| **Top** | `WOL_ESP` | Static header for Configuration Mode. |
+| **Middle**| `192.168` | Portal IP (Part 1). |
+| **Bottom**| `.4.1` | Portal IP (Part 2). |
+
+### 2. Connecting Mode
+| Line | Content | Description |
+| :--- | :--- | :--- |
+| **Top** | `>>>>>>>` | Activity heartbeat. |
+| **Middle**| `Waiting` | Status message. |
+| **Bottom**| `WIFI` | Pending network connection. |
+
+### 3. Operation Mode (Station)
+| Line | Content | Description |
+| :--- | :--- | :--- |
+| **Top** | `>>>>>>>` | Real-time refresh indicator. |
+| **Middle**| `1.111` | ESP32 IP (Last two octets, e.g., 192.168.**1.111**). |
+| **Bottom**| `* 1.222` | `*` = Online / `x` = Offline + Target PC IP octets. |
+
+---
 
 ## Image
 ![alt text](img/working.gif)
+
+![alt text](img/portal1.png)
+
+![alt text](img/portal2.png)
+
+![alt text](img/portal3.png)
+
+![alt text](img/connecting_wifi.png)
+
+![alt text](img/wol_magic_packet.png)
+
+![alt text](img/factory_reset.png)
 
 ![alt text](img/memory.png)

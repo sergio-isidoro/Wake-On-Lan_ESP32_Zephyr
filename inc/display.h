@@ -9,17 +9,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <zephyr/sys/reboot.h>
+ 
+/* Semaphore to start the display thread (given by wifi.c when IP is acquired) */
+extern struct k_sem sem_display_start;
+ 
+/* Semaphore to force an immediate display refresh */
+extern struct k_sem sem_ui_refresh;
+ 
+extern bool display_station_ready;
 
-/**
- * @brief Initializes the I2C OLED display.
- */
-void display_init(void);
-
-/**
- * @brief Updates the display with the current network and PC status.
- * * @param is_online Current status of the target PC.
- * @param ip Current IP address of the ESP32 (optional).
- */
-void display_update_status(bool is_online, const char *ip);
-
+extern bool has_ip;
+ 
+/* State flags */
+extern bool display_ap_mode;
+extern bool display_wifi_ready;
+ 
 #endif /* DISPLAY_H */
+ 

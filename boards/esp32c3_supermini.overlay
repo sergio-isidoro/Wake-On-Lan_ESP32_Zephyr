@@ -4,6 +4,11 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
+	chosen {
+		zephyr,display = &ssd1306;
+		zephyr,flash-controller = &flash;
+	};
+
 	cpus {
 		cpu0: cpu@0 {
 			device_type = "cpu";
@@ -35,10 +40,6 @@
 		};
 	};
 
-	chosen {
-		zephyr,display = &ssd1306;
-	};
-
 	buttons {
 		compatible = "gpio-keys";
 		user_button: button_0 {
@@ -46,6 +47,10 @@
 			label = "Boot Button";
 		};
 	};
+};
+
+&wdt1 {
+    status = "okay";
 };
 
 &i2c0 {
@@ -77,4 +82,17 @@
 			output-high;
 		};
 	};
+};
+
+&flash0 {
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
+
+        nvs_storage: partition@3f0000 {
+		label = "nvs_storage";
+		reg = <0x3f0000 0x00010000>;
+	};
+    };
 };

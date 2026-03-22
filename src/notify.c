@@ -1,5 +1,8 @@
 #include "notify.h"
 
+extern bool display_wifi_ready;
+extern bool display_station_ready;
+
 /* Get LED definition from Devicetree (blue_led must be in your overlay) */
 static const struct gpio_dt_spec blue_led = GPIO_DT_SPEC_GET(DT_NODELABEL(blue_led), gpios);
 
@@ -17,17 +20,17 @@ void notify_init(void) {
 void notify_event(notify_type_t type) {
     int blinks = (type == NOTIFY_WOL_SENT) ? 2 : 1;
 
-    /* 1. Signal the Display thread to update immediately */
-    k_sem_give(&sem_ui_refresh);
+    /* Only wake up display in station mode */
+    if (display_station_ready) {
+        k_sem_give(&sem_ui_refresh);
+    }
 
-    /* 2. Visual LED Feedback (Blocking the caller thread for the blink duration) */
     for (int i = 0; i < blinks; i++) {
-        gpio_pin_set_dt(&blue_led, 1);  /* LED ON */
-        k_msleep(500);                  /* Your requested 500ms */
-        gpio_pin_set_dt(&blue_led, 0);  /* LED OFF */
-        
+        gpio_pin_set_dt(&blue_led, 1);
+        k_msleep(500);
+        gpio_pin_set_dt(&blue_led, 0);
         if (blinks > 1 && i < (blinks - 1)) {
-            k_msleep(200);              /* Gap between blinks */
+            k_msleep(200);
         }
     }
 }
