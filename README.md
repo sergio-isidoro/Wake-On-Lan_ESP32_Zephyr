@@ -70,5 +70,3 @@ The project follows a clean, modular architecture:
 ![alt text](img/working.gif)
 
 ![alt text](img/memory.png)
-
-![alt text](img/serial.png)
