@@ -15,8 +15,10 @@
 #include <errno.h>
 #include <stdbool.h>
 
-/* --- Global Variables for UI Synchronization --- */
-/* These are defined in wifi.c and used by display.c to show status */
+/**
+ * Global variables to hold network state and configuration.
+ * These are defined in wifi.c and accessed by other modules as needed.
+ */
 extern char global_ip_str[INET_ADDRSTRLEN];
 extern bool last_known_state;
 extern char target_pc_ip[INET_ADDRSTRLEN];

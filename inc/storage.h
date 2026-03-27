@@ -12,10 +12,10 @@
 /* Unique IDs for each entry in the NVS file system.
  * These IDs are used as "keys" to access data in Flash.
  */
-#define STORAGE_ID_SSID 1
-#define STORAGE_ID_PASS 2
-#define STORAGE_ID_MAC  3
-#define STORAGE_ID_IP   4 
+#define STORAGE_ID_SSID     1
+#define STORAGE_ID_PASS     2
+#define STORAGE_ID_MAC      3
+#define STORAGE_ID_IP       4
  
 /**
  * @brief Initializes the NVS storage subsystem.
@@ -50,4 +50,3 @@ int storage_read_config(char *s, char *p, char *m, char *ip);
 void storage_clear_all(void);
  
 #endif /* STORAGE_H */
- 

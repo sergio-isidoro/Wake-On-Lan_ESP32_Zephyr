@@ -10,62 +10,69 @@
 #include "portal.h"
 #include "display.h"
 
-#define FACTORY_RESET_THRESHOLD     5000
-#define WDT_TIMEOUT_MS              3000
+#define WDT_TIMEOUT_MS              1500        /* Watchdog timeout in milliseconds */
 
 int main(void) {
-    k_msleep(1000);
+    /* Short delay to allow system stabilization after boot */
+    k_msleep(100);
     
+    /* Watchdog Timer Setup */
     const struct device *wdt_dev = DEVICE_DT_GET(DT_NODELABEL(wdt1));
-    char ssid[32], pass[64], mac[18], pc_ip[INET_ADDRSTRLEN];
-    int rc;
+    int wdt_channel = -1;                                                       // Will hold the channel ID if WDT is successfully initialized
 
-    /* 1. Hardware and Subsystem Initialization */
+    /* Buffers for configuration data */
+    char ssid[32], pass[64], mac[18], pc_ip[INET_ADDRSTRLEN];
+
+    /* Hardware and Subsystem Initialization */
     storage_init();
     notify_init();
     button_init();
 
-    int wdt_channel = -1;
+    /* Configure WDT with a timeout and set it to reset the SoC on expiry */
     if (device_is_ready(wdt_dev)) {
         struct wdt_timeout_cfg wdt_config = {.window.max = WDT_TIMEOUT_MS, .flags = WDT_FLAG_RESET_SOC};
         wdt_channel = wdt_install_timeout(wdt_dev, &wdt_config);
         wdt_setup(wdt_dev, WDT_OPT_PAUSE_HALTED_BY_DBG);
     }
 
-    printf("\n--- Wake-on-LAN ESP32-C3 SuperMini ---\n");
-
-    /* 3. Flow Decision */
-    rc = storage_read_config(ssid, pass, mac, pc_ip);
+    /* Flow Decision */
+    int rc = storage_read_config(ssid, pass, mac, pc_ip);
 
     if (rc == 0 && strlen(ssid) > 0 && strlen(mac) == 17) {
         printf("[SYSTEM] Config loaded. Starting Station mode...\n");
-        k_msleep(2000);
-        wifi_init_and_connect(ssid, pass, mac, pc_ip);
+        wifi_init_and_connect(ssid, pass, mac, pc_ip);                  // This function will block until WiFi is connected and IP is obtained, then return to main loop
     } else {
         if (rc == 0) {
             printf("[SYSTEM] Invalid config in Flash. Clearing...\n");
-            storage_clear_all();
+            storage_clear_all();                                        // Clear invalid config to allow fresh start on next boot
         }
-        printf("[SYSTEM] Starting Captive Portal...\n");
-        start_portal();
+        printf("[SYSTEM] Starting Portal...\n");
+        start_portal();                                                 // This function will block and run the WiFi AP and configuration portal until the user completes setup, then it will reboot the system to apply the new config
     }
 
-    if (wdt_channel >= 0) wdt_feed(wdt_dev, wdt_channel);
+    printf("\n--- Wake-on-LAN ESP32-C3 SuperMini ---\n");
 
+    /* Main Loop */
     while (1) {
+        
+        /* Check if no IP address */
         if (!has_ip) {
-            /* 2. Factory Reset on Boot */
+            /* Check for factory reset button press */
             if (button_is_pressed()) {
                 printf("[SYSTEM] FACTORY RESET ACTIVATED!\n");
-                storage_clear_all();
-                notify_event(NOTIFY_WOL_SENT);
-                k_msleep(1000);
-                sys_reboot(SYS_REBOOT_COLD);
+                storage_clear_all();                                // Clear all stored configurations
+                notify_event(NOTIFY_WOL_SENT);                      // Notify user of reset (2 blinks)
+                k_msleep(1000);                                     // Wait a moment to ensure notification is seen
+                sys_reboot(SYS_REBOOT_COLD);                        // Reboot the system to start fresh
             }
         }
 
-        if (wdt_channel >= 0) wdt_feed(wdt_dev, wdt_channel);
-        k_msleep(1500);
+        /* Feed the watchdog to prevent reset */
+        if (wdt_channel >= 0){
+            wdt_feed(wdt_dev, wdt_channel);
+        }
+
+        k_msleep(500);                                              // Sleep for a while before checking again
     }
 
     return 0;

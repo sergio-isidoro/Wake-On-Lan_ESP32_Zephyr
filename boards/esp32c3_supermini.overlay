@@ -29,6 +29,7 @@
 	
 	aliases {
 		sw0 = &user_button;
+		led0 = &blue_led;
 	};
 
 	leds {
@@ -56,20 +57,23 @@
 &i2c0 {
 	status = "okay";
 	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
 
 	ssd1306: ssd1306@3c {
 		compatible = "solomon,ssd1306fb";
-		status = "okay";
 		reg = <0x3c>;
 		width = <72>;
 		height = <40>;
 		segment-offset = <28>;
 		page-offset = <0>;
 		display-offset = <0>;
-		multiplex-ratio = <39>;
+		multiplex-ratio = <0x27>;
+		prechargep = <0x22>;
+		ready-time-ms = <10>;
 		segment-remap;
 		com-invdir;
-		prechargep = <0x22>;
+		use-internal-iref;
 	};
 };
 

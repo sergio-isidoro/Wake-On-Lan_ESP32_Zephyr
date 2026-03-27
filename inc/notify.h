@@ -15,9 +15,10 @@ typedef enum {
  */
 void notify_init(void);
 
-/**
- * @brief Trigger a visual notification (LED + Display Signal).
- * @param type The event type (WOL or PING).
+/* @brief Notify the user of an event by blinking the blue LED.
+ *        The pattern is determined by the type of event:
+ *        - NOTIFY_WOL_SENT: 2 blinks (500ms ON, 200ms OFF)
+ *        - NOTIFY_PING_UPDATE: 1 blink (500ms ON)
  */
 void notify_event(notify_type_t type);
 

@@ -1,39 +1,35 @@
 #include "wifi.h"
 #include "notify.h"
 #include "storage.h"
-#include <zephyr/net/dhcpv4.h>
+#include "display.h"
 
 #define WOL_PORT    9
 
-extern bool display_wifi_ready;
-extern struct k_sem sem_display_start;
+/* --- PING (ICMP) VARIABLES --- */
+static struct net_icmp_ctx ping_ctx;
+static struct k_work_delayable ping_work;
+static volatile bool target_is_online   = false;
+bool last_known_state                   = false;
+static bool first_ping_done             = false;
+static uint16_t ping_seq                = 0;
+static uint8_t ping_attempts            = 0;
 
-static bool wifi_connected = false;
+static bool wifi_connected              = false;
 
 /* Configuration variables loaded from Flash */
 static char saved_ssid[32];
 static char saved_pass[64];
 static char saved_mac_str[18];
 static uint8_t target_mac_bin[6];
-char target_pc_ip[INET_ADDRSTRLEN] = "255.255.255.255";
+char target_pc_ip[INET_ADDRSTRLEN]      = "255.255.255.255";
 
 /* Global variables for UI/Display */
 char global_ip_str[INET_ADDRSTRLEN] = "";
-extern struct k_sem sem_ui_refresh;
 
 static struct net_mgmt_event_callback wifi_cb;
 static struct net_mgmt_event_callback ipv4_cb;
 static struct k_work wol_work;
-static struct k_work_delayable reconnect_work; /* reconnect via workqueue */
-
-/* --- PING (ICMP) VARIABLES --- */
-static struct net_icmp_ctx ping_ctx;
-static struct k_work_delayable ping_work;
-static volatile bool target_is_online = false;
-bool last_known_state = false;
-static bool first_ping_done = false;
-static uint16_t ping_seq = 0;
-static uint8_t ping_attempts = 0;
+static struct k_work_delayable reconnect_work;
 
 /* --- MAC PARSE --- */
 static void parse_mac_address(const char *mac_str, uint8_t *mac_bin) {
