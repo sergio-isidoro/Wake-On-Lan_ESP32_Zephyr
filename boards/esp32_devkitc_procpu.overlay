@@ -2,7 +2,6 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-	/* Manter os Aliases idênticos ao código C */
 	aliases {
 		sw0 = &user_button;
 		led0 = &blue_led;
