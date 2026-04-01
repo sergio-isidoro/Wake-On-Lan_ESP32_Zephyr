@@ -115,7 +115,7 @@ void display_task_entry(void *p1, void *p2, void *p3)
     display_station_ready = true;
 
     while (1) {
-        k_sem_take(&sem_ui_refresh, K_MSEC(25));   /* 40 FPS cap */
+        k_sem_take(&sem_ui_refresh, K_MSEC(200));   /* 40 FPS cap */
 
         k_mutex_lock(&display_mutex, K_FOREVER);
 
