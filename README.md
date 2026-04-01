@@ -46,19 +46,19 @@ On first boot the device starts in AP mode. Connect to `WOL_ESP` and open `192.1
 
 ### Configuration form
 
-![Portal config form](assets/portal_form.png)
+![Portal config form](assets/portal1.png)
 
 Fill in SSID, password, target PC IP, and MAC address, then press **SAVE**.
 
 ### Validation
 
-![Portal validation error](assets/portal_validation.png)
+![Portal validation error](assets/portal2.png)
 
 If any field is missing or the IP/MAC format is invalid, an inline error is shown — no page reload.
 
 ### Saved
 
-![Portal saved screen](assets/portal_saved.png)
+![Portal saved screen](assets/portal3.png)
 
 On success the page shows **SAVED! — Rebooting...** and the device restarts in station mode with the saved credentials.
 
