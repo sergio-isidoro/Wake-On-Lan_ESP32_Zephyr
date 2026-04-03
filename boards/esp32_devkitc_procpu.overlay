@@ -70,7 +70,7 @@
 
 		st7789v: st7789v@0 {
 			compatible = "sitronix,st7789v";
-			mipi-max-frequency = <20000000>;
+			mipi-max-frequency = <30000000>;
 			reg = <0>;
 			width = <240>;
 			height = <240>;
@@ -86,6 +86,7 @@
 			colmod = <0x55>;
 			//inversion-off;
 			lcm = <0x0C>;
+			ready-time-ms = <10>;
 
 			porch-param = [0c 0c 00 33 33];
 			cmd2en-param = [5a 69 02 01];
