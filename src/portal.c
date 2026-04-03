@@ -2,7 +2,7 @@
 #include "portal_html.h"
 #include "storage.h"
 #include "notify.h"
-#include "display.h"
+#include "shared.h"
 
 static bool portal_active = false;
 
@@ -292,7 +292,6 @@ K_THREAD_DEFINE(dns_tid, 2048, dns_server_task, NULL, NULL, NULL, 8, 0, 0);
 
 /* --- START --- */
 void start_portal(void) {
-    display_ap_mode = true;
 
     struct net_if *iface = net_if_get_default();
 
@@ -323,5 +322,4 @@ void start_portal(void) {
 
     portal_active = true;
 
-    k_sem_give(&sem_display_start);
 }

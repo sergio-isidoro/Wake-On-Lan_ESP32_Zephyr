@@ -1,188 +1,253 @@
-#include "display.h"
-#include "wifi.h"
+/*
+ * display.c — LVGL display thread (single-core Zephyr)
+ *
+ * Runs as a normal Zephyr thread at priority 7.
+ * Communicates with the Wi-Fi/main task via the global g_shared struct.
+ *
+ * GUI layout (240×240 ST7789, dark theme):
+ *
+ *   ┌──────────────────────────┐
+ *   │ ▐  WAKE ON LAN      ⠋   │  ← header card  (y=4,  h=44)
+ *   ├──────────────────────────┤
+ *   │  MY IP                   │  ← ip card      (y=54, h=56)
+ *   │  192.168.1.42            │
+ *   ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+ *   │  TARGET PC          ON   │  ← target card  (y=118, h=56)
+ *   │  192.168.1.10            │
+ *   ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+ *   │      ⚡ WoL Sent!        │  ← event bar    (y=182, h=44)
+ *   │  ESP32  •  Zephyr RTOS   │
+ *   └──────────────────────────┘
+ */
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/display.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/drivers/pwm.h>
 #include <lvgl.h>
+#include <string.h>
 
-bool display_ap_mode        = false;
-bool display_wifi_ready     = false;
-bool display_station_ready  = false;
-bool has_ip                 = false;
+#include "shared.h"
+#include "display.h"
 
-K_MUTEX_DEFINE(display_mutex);
-K_SEM_DEFINE(sem_ui_refresh,    0, 1);
-K_SEM_DEFINE(sem_display_start, 0, 1);
-K_SEM_DEFINE(sem_wol_sent,      0, 1);
+#define BACKLIGHT_BRIGHTNESS 20
 
-/* ── Spinner — ASCII clock hand, 100% Montserrat-safe ──────────────────────
- *  |  /  -  \  |  /  -  \
- * Looks like a rotating needle at 40 FPS.
- */
-static const char * const spinner[] = {
-    "O", "X", "O", "X", "O", "X", "O", "X"
-};
-#define SPINNER_FRAMES  ARRAY_SIZE(spinner)
+static const struct pwm_dt_spec backlight = PWM_DT_SPEC_GET(DT_ALIAS(bl_pwm));
 
-/* ── Dot-pulse under "Connecting" ──────────────────────────────────────────
- * Advances every 8 frames (~5 Hz).
- */
-static const char * const dots[] = { "   ", ".  ", ".. ", "..." };
-#define DOTS_FRAMES  ARRAY_SIZE(dots)
+void set_backlight_brightness(uint8_t percent) {
+    if (!device_is_ready(backlight.dev)) return;
 
-void display_task_entry(void *p1, void *p2, void *p3)
-{
-    k_sem_take(&sem_display_start, K_FOREVER);
+    if (percent > 100) percent = 100;
 
+    /* Calcula o duty cycle baseado no período definido no DT (5000ns) */
+    uint32_t pulse = (backlight.period * percent) / 100;
+
+    pwm_set_dt(&backlight, backlight.period, pulse);
+}
+
+LOG_MODULE_REGISTER(display, CONFIG_LOG_DEFAULT_LEVEL);
+
+/* ── Palette Midnight Ultra ── */
+#define C_BG        0x000000
+#define C_CARD      0x0A0C14
+#define C_CARD_LIT  0x141824
+#define C_BORDER    0x1E2433
+#define C_ACCENT    0x00B0FF
+#define C_GREEN     0x00C853
+#define C_RED       0xFF1744
+#define C_GOLD      0xFFAB00
+#define C_WHITE     0xF5F5F7
+#define C_MUTED     0x4A5568
+
+static const char * const DOTS[] = { ".", "..", "..." };
+#define DOTS_N 3
+
+typedef struct {
+    lv_obj_t *hdr_subtitle;
+    lv_obj_t *hdr_spin;
+    lv_obj_t *lbl_ip_val;
+    lv_obj_t *lbl_tgt_ip;
+    lv_obj_t *lbl_tgt_state;
+    lv_obj_t *wol_bar;
+    lv_obj_t *lbl_wol;
+} ui_t;
+
+/* ── Helpers ── */
+static lv_obj_t *make_card(lv_obj_t *p, int x, int y, int w, int h, bool lit) {
+    lv_obj_t *c = lv_obj_create(p);
+    lv_obj_set_pos(c, x, y);
+    lv_obj_set_size(c, w, h);
+    lv_obj_set_scrollbar_mode(c, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_color(c, lv_color_hex(lit ? C_CARD_LIT : C_CARD), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(c, lv_color_hex(C_BORDER), 0);
+    lv_obj_set_style_border_width(c, 1, 0);
+    lv_obj_set_style_radius(c, 10, 0);
+    
+    /* CORREÇÃO CRÍTICA: Faz com que os filhos (faixa azul) sejam cortados nos cantos arredondados */
+    lv_obj_set_style_clip_corner(c, true, 0);
+    
+    lv_obj_set_style_pad_all(c, 0, 0);
+    return c;
+}
+
+static lv_obj_t *make_label(lv_obj_t *p, const lv_font_t *f, uint32_t c, int align, int ox, int oy, const char *txt) {
+    lv_obj_t *l = lv_label_create(p);
+    lv_obj_set_style_text_font(l, f, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(c), 0);
+    lv_obj_align(l, align, ox, oy);
+    lv_label_set_text(l, txt);
+    return l;
+}
+
+static void make_accent_strip(lv_obj_t *card, int h) {
+    lv_obj_t *s = lv_obj_create(card);
+    lv_obj_set_pos(s, 0, 0); // Garante posição na origem do card
+    lv_obj_set_size(s, 4, h);
+    lv_obj_set_style_bg_color(s, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s, 0, 0);
+    lv_obj_set_style_radius(s, 0, 0); // A curva vem do "clip_corner" do pai
+}
+
+/* ── Screens ── */
+static void build_ap_screen(void) {
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
+    
+    lv_obj_t *hdr = make_card(scr, 4, 4, 232, 44, true);
+    make_accent_strip(hdr, 44);
+    make_label(hdr, &lv_font_montserrat_14, C_ACCENT, LV_ALIGN_LEFT_MID, 14, -8, "ACCESS POINT");
+    make_label(hdr, &lv_font_montserrat_14, C_WHITE, LV_ALIGN_LEFT_MID, 14, 8, "Setup Mode");
+
+    lv_obj_t *ssid = make_card(scr, 4, 54, 232, 56, false);
+    make_label(ssid, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_LEFT_MID, 12, -11, "SSID");
+    make_label(ssid, &lv_font_montserrat_24, C_WHITE, LV_ALIGN_LEFT_MID, 12, 9, "WOL_ESP");
+
+    lv_obj_t *ipc = make_card(scr, 4, 116, 232, 56, false);
+    make_label(ipc, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_LEFT_MID, 12, -11, "PORTAL");
+    make_label(ipc, &lv_font_montserrat_24, C_ACCENT, LV_ALIGN_LEFT_MID, 12, 9, "192.168.4.1");
+}
+
+static void build_station_screen(ui_t *ui) {
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
+
+    lv_obj_t *hdr = make_card(scr, 4, 4, 232, 44, true);
+    make_accent_strip(hdr, 44);
+    make_label(hdr, &lv_font_montserrat_14, C_ACCENT, LV_ALIGN_LEFT_MID, 14, -8, "WAKE ON LAN");
+
+    ui->hdr_subtitle = make_label(hdr, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_LEFT_MID, 14, 8, "Connecting");
+    
+    ui->hdr_spin = make_label(hdr, &lv_font_montserrat_14, C_ACCENT, LV_ALIGN_RIGHT_MID, -15, 0, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_transform_pivot_x(ui->hdr_spin, 8, 0); 
+    lv_obj_set_style_transform_pivot_y(ui->hdr_spin, 8, 0);
+
+    lv_obj_t *ipc = make_card(scr, 4, 54, 232, 56, false);
+    make_label(ipc, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_LEFT_MID, 12, -11, "MY IP");
+    ui->lbl_ip_val = make_label(ipc, &lv_font_montserrat_24, C_WHITE, LV_ALIGN_LEFT_MID, 12, 9, "");
+
+    lv_obj_t *tgt = make_card(scr, 4, 118, 232, 56, false);
+    make_label(tgt, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_LEFT_MID, 12, -11, "IP TARGET");
+    ui->lbl_tgt_ip = make_label(tgt, &lv_font_montserrat_24, C_WHITE, LV_ALIGN_LEFT_MID, 12, 9, "");
+    ui->lbl_tgt_state = make_label(tgt, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_RIGHT_MID, -12, 9, "");
+
+    ui->wol_bar = make_card(scr, 4, 182, 232, 44, false);
+    lv_obj_set_style_bg_opa(ui->wol_bar, LV_OPA_0, 0);
+    lv_obj_set_style_border_opa(ui->wol_bar, LV_OPA_0, 0);
+    ui->lbl_wol = make_label(ui->wol_bar, &lv_font_montserrat_24, C_GOLD, LV_ALIGN_CENTER, 0, 0, "");
+}
+
+/* ── Thread ── */
+static void display_thread(void *p1, void *p2, void *p3) {
     const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    if (!device_is_ready(disp)) return;
 
-    for (int i = 0; !device_is_ready(disp) && i < 30; i++) {
-        k_msleep(100);
-    }
-
-    if (!device_is_ready(disp)) {
-        printk("[DISPLAY] ERROR: device never became ready\n");
-        return;
+    if (!device_is_ready(backlight.dev)) {
+        LOG_ERR("PWM Backlight device not ready");
+        set_backlight_brightness(0);
+    } else {
+        set_backlight_brightness(BACKLIGHT_BRIGHTNESS);
     }
 
     display_blanking_off(disp);
+    lv_init();
 
-    /* ── Static UI build (once) ─────────────────────────────────────────── */
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-    static lv_style_t sty_white, sty_dim, sty_green, sty_spinner;
+    make_label(scr, &lv_font_montserrat_24, C_ACCENT, LV_ALIGN_CENTER, 0, -15, "Zephyr RTOS");
+    make_label(scr, &lv_font_montserrat_14, C_MUTED, LV_ALIGN_CENTER, 0, 15, "WOL by Sergio.I");
 
-    lv_style_init(&sty_spinner);
-    lv_style_set_text_color(&sty_spinner, lv_color_hex(0x40C4FF));
-    lv_style_set_text_font(&sty_spinner, &lv_font_montserrat_32);
+    lv_task_handler();
+    k_msleep(3000);
 
-    lv_style_init(&sty_white);
-    lv_style_set_text_color(&sty_white, lv_color_white());
-    lv_style_set_text_font(&sty_white, &lv_font_montserrat_24);
+    lv_obj_clean(scr);
 
-    lv_style_init(&sty_dim);
-    lv_style_set_text_color(&sty_dim, lv_color_hex(0x888888));
-    lv_style_set_text_font(&sty_dim, &lv_font_montserrat_14);
-
-    lv_style_init(&sty_green);
-    lv_style_set_text_color(&sty_green, lv_color_hex(0x00E676));
-    lv_style_set_text_font(&sty_green, &lv_font_montserrat_14);
-
-    lv_obj_t *lbl_spin   = lv_label_create(scr);
-    lv_obj_t *lbl_sub    = lv_label_create(scr);
-    lv_obj_t *lbl_myip   = lv_label_create(scr);
-    lv_obj_t *lbl_target = lv_label_create(scr);
-    lv_obj_t *lbl_wol    = lv_label_create(scr);
-
-    lv_obj_add_style(lbl_spin,   &sty_spinner, LV_PART_MAIN);
-    lv_obj_add_style(lbl_sub,    &sty_dim,     LV_PART_MAIN);
-    lv_obj_add_style(lbl_myip,   &sty_white,   LV_PART_MAIN);
-    lv_obj_add_style(lbl_target, &sty_dim,     LV_PART_MAIN);
-    lv_obj_add_style(lbl_wol,    &sty_green,   LV_PART_MAIN);
-
-    lv_obj_align(lbl_spin,   LV_ALIGN_TOP_MID, 0,  30);
-    lv_obj_align(lbl_sub,    LV_ALIGN_TOP_MID, 0,  80);
-    lv_obj_align(lbl_myip,   LV_ALIGN_TOP_MID, 0, 115);
-    lv_obj_align(lbl_target, LV_ALIGN_TOP_MID, 0, 155);
-    lv_obj_align(lbl_wol,    LV_ALIGN_TOP_MID, 0, 190);
-
-    lv_label_set_text_static(lbl_wol, "");
-
-    /* ── AP MODE ────────────────────────────────────────────────────────── */
-    if (display_ap_mode) {
-        lv_label_set_text_static(lbl_spin,   "WOL");
-        lv_label_set_text_static(lbl_sub,    "Access Point");
-        lv_label_set_text_static(lbl_myip,   "192.168.4.1");
-        lv_label_set_text_static(lbl_target, "Configure WiFi");
-        lv_task_handler();
-        display_wifi_ready = true;
-
-        while (1) {
-            k_sem_take(&sem_ui_refresh, K_FOREVER);
-            lv_task_handler();
-        }
+    if (SHARED->ap_mode) {
+        build_ap_screen();
+        while (1) { lv_task_handler(); k_msleep(50); }
     }
 
-    /* ── STATION MODE ───────────────────────────────────────────────────── */
-    static char prev_myip[INET_ADDRSTRLEN] = "";
-    static char prev_target_str[32]        = "";
-    static bool prev_has_ip                = true;  /* force first render */
+    static ui_t ui;
+    build_station_screen(&ui);
 
-    uint8_t  spin_idx      = 0;
-    uint8_t  dots_idx      = 0;
-    uint8_t  dots_div      = 0;
-    int32_t  wol_hide_tick = 0;
-
-    display_station_ready = true;
+    uint16_t angle = 0;
+    uint8_t dots_idx = 0;
+    int64_t event_hide_at = 0;
 
     while (1) {
-        k_sem_take(&sem_ui_refresh, K_MSEC(200));   /* 40 FPS cap */
+        int64_t now = k_uptime_get();
 
-        k_mutex_lock(&display_mutex, K_FOREVER);
+        angle = (angle + 120) % 3600; 
+        lv_obj_set_style_transform_angle(ui.hdr_spin, angle, 0);
 
-        /* ── Spinner ── */
-        lv_label_set_text_static(lbl_spin, spinner[spin_idx]);
-        spin_idx = (spin_idx + 1) % SPINNER_FRAMES;
+        dots_idx = (now / 350) % DOTS_N;
 
-        /* ── WOL flash ── */
-        if (k_sem_take(&sem_wol_sent, K_NO_WAIT) == 0) {
-            lv_label_set_text_static(lbl_wol, ">> WoL sent! <<");
-            wol_hide_tick = (int32_t)k_uptime_get_32() + 1500;
-        } else if (wol_hide_tick &&
-                   (int32_t)(k_uptime_get_32() - wol_hide_tick) >= 0) {
-            lv_label_set_text_static(lbl_wol, "");
-            wol_hide_tick = 0;
+        if (SHARED->wol_sent || SHARED->factory_reset) {
+            bool is_reset = SHARED->factory_reset;
+            SHARED->wol_sent = false;
+            
+            lv_obj_set_style_bg_opa(ui.wol_bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_opa(ui.wol_bar, LV_OPA_COVER, 0);
+            
+            if (is_reset) {
+                lv_obj_set_style_border_color(ui.wol_bar, lv_color_hex(C_RED), 0);
+                lv_obj_set_style_text_color(ui.lbl_wol, lv_color_hex(C_RED), 0);
+                lv_label_set_text(ui.lbl_wol, LV_SYMBOL_TRASH " Factory Reset");
+            } else {
+                lv_obj_set_style_border_color(ui.wol_bar, lv_color_hex(C_GOLD), 0);
+                lv_obj_set_style_text_color(ui.lbl_wol, lv_color_hex(C_GOLD), 0);
+                lv_label_set_text(ui.lbl_wol, LV_SYMBOL_CHARGE " WoL Sent!");
+            }
+            
+            event_hide_at = now + 2000;
+        } else if (event_hide_at && now >= event_hide_at) {
+            lv_obj_set_style_bg_opa(ui.wol_bar, LV_OPA_0, 0);
+            lv_obj_set_style_border_opa(ui.wol_bar, LV_OPA_0, 0);
+            lv_label_set_text(ui.lbl_wol, "");
+            event_hide_at = 0;
         }
 
-        /* ── IP state ── */
-        has_ip = (global_ip_str[0] != '\0' &&
-                  strcmp(global_ip_str, "0.0.0.0") != 0);
-
-        if (!has_ip) {
-            if (prev_has_ip) {
-                lv_label_set_text_static(lbl_myip,   "Connecting");
-                lv_label_set_text_static(lbl_target, "");
-                prev_myip[0]       = '\0';
-                prev_target_str[0] = '\0';
-                prev_has_ip        = false;
-            }
-
-            /* Dot-pulse under "Connecting" */
-            if (++dots_div >= 8) {
-                dots_div = 0;
-                dots_idx = (dots_idx + 1) % DOTS_FRAMES;
-                lv_label_set_text_static(lbl_sub, dots[dots_idx]);
-            }
-
+        if (!SHARED->has_ip) {
+            lv_label_set_text(ui.hdr_subtitle, "Connecting");
+            lv_obj_set_style_text_color(ui.hdr_subtitle, lv_color_hex(C_MUTED), 0);
+            lv_label_set_text(ui.lbl_ip_val, DOTS[dots_idx]);
+            lv_label_set_text(ui.lbl_tgt_ip, DOTS[dots_idx]);
+            lv_label_set_text(ui.lbl_tgt_state, "");
         } else {
-            if (!prev_has_ip) {
-                lv_label_set_text_static(lbl_sub, "");
-                prev_has_ip = true;
-            }
-
-            /* Device IP */
-            if (strcmp(global_ip_str, prev_myip) != 0) {
-                lv_label_set_text(lbl_myip, global_ip_str);
-                strncpy(prev_myip, global_ip_str, sizeof(prev_myip) - 1);
-                prev_myip[sizeof(prev_myip) - 1] = '\0';
-            }
-
-            /* Target PC: "[ON]  192.168.1.50" or "[OFF]  192.168.1.50" */
-            char new_target[32];
-            snprintf(new_target, sizeof(new_target), "%s  %s",
-                     last_known_state ? "[ON]" : "[OFF]",
-                     target_pc_ip);
-
-            if (strcmp(new_target, prev_target_str) != 0) {
-                lv_label_set_text(lbl_target, new_target);
-                strncpy(prev_target_str, new_target, sizeof(prev_target_str) - 1);
-                prev_target_str[sizeof(prev_target_str) - 1] = '\0';
-            }
+            lv_label_set_text(ui.hdr_subtitle, "Connected");
+            lv_obj_set_style_text_color(ui.hdr_subtitle, lv_color_hex(C_GREEN), 0);
+            lv_label_set_text(ui.lbl_ip_val, (char*)SHARED->my_ip);
+            lv_label_set_text(ui.lbl_tgt_ip, (char*)SHARED->target_ip);
+            lv_label_set_text(ui.lbl_tgt_state, SHARED->last_known_state ? "ON" : "OFF");
+            lv_obj_set_style_text_color(ui.lbl_tgt_state, lv_color_hex(SHARED->last_known_state ? C_GREEN : C_RED), 0);
         }
 
         lv_task_handler();
-
-        k_mutex_unlock(&display_mutex);
+        k_msleep(30);
     }
 }
 
-K_THREAD_DEFINE(display_tid, 8192, display_task_entry, NULL, NULL, NULL, 7, 0, 0);
+K_THREAD_DEFINE(display_id, 4096, display_thread, NULL, NULL, NULL, 7, 0, 0);

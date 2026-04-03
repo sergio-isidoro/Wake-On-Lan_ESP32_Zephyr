@@ -1,10 +1,12 @@
 #include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <dt-bindings/pinctrl/esp32-pinctrl.h>
 
 / {
 	aliases {
 		sw0 = &user_button;
 		led0 = &blue_led;
+		bl-pwm = &bl_pwm_led;
 	};
 
 	chosen {
@@ -22,29 +24,30 @@
 			reg = <0>;
 			clock-frequency = <240000000>;
 		};
-
-		cpu1: cpu@1 {
-			device_type = "cpu";
-			compatible = "espressif,xtensa-lx6";
-			reg = <1>;
-			clock-frequency = <240000000>;
-		};
 	};
 
 	clock: clock {
 		compatible = "espressif,esp32-clock";
 		status = "okay";
 		#clock-cells = <1>;
-		fast-clk-src = <1>; 
+		fast-clk-src = <1>;
 		slow-clk-src = <0>;
 	};
 
 	leds {
 		compatible = "gpio-leds";
-		
+
 		blue_led: led_0 {
 			gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 			label = "Blue LED";
+		};
+	};
+
+	backlight_pwm {
+		compatible = "pwm-leds";
+		bl_pwm_led: bl_pwm_led {
+			pwms = <&ledc0 0 5000 PWM_POLARITY_NORMAL>; // Canal 0, 5kHz (5000ns)
+			label = "Backlight PWM";
 		};
 	};
 
@@ -74,7 +77,6 @@
 			x-offset = <0>;
 			y-offset = <0>;
 
-			/* Parâmetros obrigatórios exigidos pelo Zephyr 4.3.0 */
 			vcom = <0x28>;
 			gctrl = <0x35>;
 			vrhs = <0x10>;
@@ -82,9 +84,9 @@
 			mdac = <0x08>;
 			gamma = <0x01>;
 			colmod = <0x55>;
+			//inversion-off;
 			lcm = <0x0C>;
 
-			/* Sequências de inicialização (Obrigatórias no binding atual) */
 			porch-param = [0c 0c 00 33 33];
 			cmd2en-param = [5a 69 02 01];
 			pwctrl1-param = [a4 a1];
@@ -100,7 +102,7 @@
 
 &gpio0 { status = "okay"; };
 &gpio1 { status = "okay"; };
-&wdt1 { status = "okay"; };
+&wdt1  { status = "okay"; };
 
 &spi3 {
 	status = "okay";
@@ -108,12 +110,35 @@
 	pinctrl-names = "default";
 };
 
+&ledc0 {
+	status = "okay";
+	#pwm-cells = <3>;
+	pinctrl-0 = <&ledc0_default>;
+	pinctrl-names = "default";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel0@0 {
+		reg = <0x0>;
+		timer = <0>;
+	};
+};
+
 &pinctrl {
 	spim3_default: spim3_default {
 		group1 {
-			pinmux = <0x001fffd2>,
-				 <0x0020ffd7>,
-				 <0x00227fc5>;
+			pinmux = <SPIM3_SCLK_GPIO18>,
+				 <SPIM3_CSEL_GPIO5>;
+		};
+		group2 {
+			pinmux = <SPIM3_MOSI_GPIO23>;
+			output-low;
+		};
+	};
+	ledc0_default: ledc0_default {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO15>;
+			output-enable;
 		};
 	};
 };
