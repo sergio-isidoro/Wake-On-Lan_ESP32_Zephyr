@@ -1,14 +1,14 @@
 #include "notify.h"
 #include "shared.h"
 
-static const struct gpio_dt_spec blue_led =
-    GPIO_DT_SPEC_GET(DT_NODELABEL(blue_led), gpios);
+static const struct gpio_dt_spec blue_led = GPIO_DT_SPEC_GET(DT_NODELABEL(blue_led), gpios);
 
 static K_SEM_DEFINE(sem_blink, 0, 1);
 static int blink_count;
 
 static void blink_thread(void *p1, void *p2, void *p3)
 {
+    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
     while (1) {
         k_sem_take(&sem_blink, K_FOREVER);
         for (int i = 0; i < blink_count; i++) {

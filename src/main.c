@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Wake On LAN — ESP32 DevKitC (single-core)
+ * Wake On LAN — ESP32 DevKitC
  *
  * main() sequence:
  *   1. watchdog_init()
  *   2. notify_init() / button_init() / storage_init()
- *   3. Read NVS → set SHARED->ap_mode
- *   4. display_start()   — starts LVGL thread (priority 7)
- *   5. wifi_init_and_connect() or start_portal()  — runs forever
+ *   3. Read NVS, set SHARED->ap_mode
+ *   4. wifi_init_and_connect() or start_portal() — runs forever
+ *
+ * Display thread is started automatically via K_THREAD_DEFINE in display.c.
  */
 
 #include <zephyr/kernel.h>
@@ -16,6 +17,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/net_ip.h>
+#include <string.h>
 
 #include "shared.h"
 #include "display.h"
@@ -28,10 +30,12 @@
 LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* ── Global shared state ─────────────────────────────────────────────────── */
+
 shared_t g_shared;
 
 /* ── Watchdog ────────────────────────────────────────────────────────────── */
-#define WDT_TIMEOUT_MS  8000
+
+#define WDT_TIMEOUT_MS 8000
 
 static const struct device *wdt_dev = DEVICE_DT_GET(DT_NODELABEL(wdt1));
 static int wdt_channel_id;
@@ -52,23 +56,24 @@ static void watchdog_init(void)
         LOG_ERR("WDT not ready");
         return;
     }
-    struct wdt_timeout_cfg cfg = {
-        .window   = { .min = 0, .max = WDT_TIMEOUT_MS },
-        .callback = NULL,
-        .flags    = WDT_FLAG_RESET_SOC,
-    };
+    struct wdt_timeout_cfg cfg = { .window = { .min = 0, .max = WDT_TIMEOUT_MS }, .callback = NULL, .flags = WDT_FLAG_RESET_SOC };
     wdt_channel_id = wdt_install_timeout(wdt_dev, &cfg);
-    if (wdt_channel_id < 0) { LOG_ERR("WDT install: %d", wdt_channel_id); return; }
+    if (wdt_channel_id < 0) {
+        LOG_ERR("WDT install: %d", wdt_channel_id);
+        return;
+    }
     if (wdt_setup(wdt_dev, WDT_OPT_PAUSE_HALTED_BY_DBG) < 0) {
-        LOG_ERR("WDT setup failed"); return;
+        LOG_ERR("WDT setup failed");
+        return;
     }
     LOG_INF("WDT armed %d ms", WDT_TIMEOUT_MS);
 }
 
-/* ── main ───────────────────────────────────────────────────────────────── */
+/* ── main ────────────────────────────────────────────────────────────────── */
+
 int main(void)
 {
-    printk("\n=== Wake On LAN — ESP32 (single-core) ===\n");
+    printk("\n=== Wake On LAN — ESP32 ===\n");
 
     memset(&g_shared, 0, sizeof(g_shared));
 
@@ -77,9 +82,9 @@ int main(void)
     button_init();
     storage_init();
 
-    char ssid[32]               = {0};
-    char pass[64]               = {0};
-    char mac[18]                = {0};
+    char ssid[32] = {0};
+    char pass[64] = {0};
+    char mac[18]  = {0};
     char pc_ip[INET_ADDRSTRLEN] = {0};
 
     bool has_creds = (storage_read_config(ssid, pass, mac, pc_ip) == 0);
@@ -93,6 +98,8 @@ int main(void)
         start_portal();
     }
 
-    while (1) { k_sleep(K_FOREVER); }
+    while (1) {
+        k_sleep(K_FOREVER);
+    }
     return 0;
 }
