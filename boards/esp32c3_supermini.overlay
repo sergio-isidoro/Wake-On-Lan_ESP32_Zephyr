@@ -1,0 +1,144 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <dt-bindings/pinctrl/esp32-pinctrl.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	aliases {
+		sw0 = &user_button;
+		led0 = &blue_led;
+		bl-pwm = &bl_pwm_led;
+	};
+
+	chosen {
+		zephyr,display = &st7789v;
+		zephyr,flash-controller = &flash;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "espressif,riscv";
+			reg = <0>;
+			clock-frequency = <160000000>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		blue_led: led_0 {
+			gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
+			label = "Blue LED";
+		};
+	};
+
+	backlight_pwm {
+		compatible = "pwm-leds";
+		bl_pwm_led: bl_pwm_led {
+			pwms = <&ledc0 2 PWM_HZ(5000) PWM_POLARITY_NORMAL>;
+			label = "Backlight PWM";
+		};
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		user_button: button_0 {
+			gpios = <&gpio0 9 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Boot Button";
+		};
+	};
+
+	mipi_dbi_st7789v {
+		compatible = "zephyr,mipi-dbi-spi";
+		spi-dev = <&spi2>;
+		dc-gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>;
+		write-only;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		st7789v: st7789v@0 {
+			compatible = "sitronix,st7789v";
+			mipi-max-frequency = <35000000>;
+			reg = <0>;
+			width = <240>;
+			height = <240>;
+			x-offset = <0>;
+			y-offset = <0>;
+			vcom = <0x28>;
+			gctrl = <0x35>;
+			vrhs = <0x10>;
+			vdvs = <0x20>;
+			mdac = <0x08>;
+			gamma = <0x01>;
+			colmod = <0x05>;
+			lcm = <0x0C>;
+			ready-time-ms = <10>;
+			porch-param = [0c 0c 00 33 33];
+			cmd2en-param = [5a 69 02 01];
+			pwctrl1-param = [a4 a1];
+			pvgam-param = [d0 00 02 07 0a 28 32 44 42 06 0e 12 14 17];
+			nvgam-param = [d0 00 02 07 0a 28 31 54 47 0e 1c 17 1b 1e];
+			ram-param = [00 e0];
+			rgb-param = [cd 08 14];
+			mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+		};
+	};
+};
+
+&gpio0 { status = "okay"; };
+
+&wdt1 { status = "okay"; };
+
+&systimer0 { status = "okay"; };
+
+&spi2 {
+	status = "okay";
+	pinctrl-0 = <&spim2_default>;
+	pinctrl-names = "default";
+};
+
+&ledc0 {
+	status = "okay";
+	#pwm-cells = <3>;
+	pinctrl-0 = <&ledc0_default>;
+	pinctrl-names = "default";
+};
+
+&pinctrl {
+	spim2_default: spim2_default {
+		group1 {
+			pinmux = <SPIM2_SCLK_GPIO4>,
+				 <SPIM2_CSEL_GPIO5>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO6>;
+			output-low;
+		};
+	};
+
+	ledc0_default: ledc0_default {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO2>;
+			output-enable;
+		};
+	};
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		nvs_storage: partition@3f0000 {
+			label = "nvs_storage";
+			reg = <0x3f0000 0x00010000>;
+		};
+	};
+};
