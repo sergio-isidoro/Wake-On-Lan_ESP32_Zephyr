@@ -1,6 +1,6 @@
-# Wake On LAN — ESP32 DevKitC (Zephyr RTOS)
+# Wake On LAN — ESP32 DevKitC/Supermini (Zephyr RTOS)
 
-A Zephyr RTOS application for the ESP32 DevKitC that sends Wake-on-LAN magic packets to wake a target PC on the local network, featuring a 1.54" ST7789V TFT display with a custom dark-themed LVGL interface showing real-time connection status and target PC state.
+A Zephyr RTOS application for the ESP32 DevKitC / Supermini that sends Wake-on-LAN magic packets to wake a target PC on the local network, featuring a 1.54" ST7789V TFT display with a custom dark-themed LVGL interface showing real-time connection status and target PC state.
 
 ---
 
@@ -38,7 +38,7 @@ A Zephyr RTOS application for the ESP32 DevKitC that sends Wake-on-LAN magic pac
 
 | Component | Details |
 |---|---|
-| Board | ESP32 DevKitC (WROOM-32) |
+| Board | ESP32 DevKitC / Supermini |
 | Display | 1.54" TFT ST7789V, 240×240, SPI |
 | Button | BOOT button (GPIO 0, active-low with internal pull-up) |
 | LED | Blue LED (GPIO 2, active-high) |
